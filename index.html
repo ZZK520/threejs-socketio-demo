@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>three.js - pointerlock controls</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+
+        #instructions {
+            width: 100%;
+            height: 100%;
+
+            display: -webkit-box;
+            display: -moz-box;
+            display: box;
+
+            -webkit-box-orient: horizontal;
+            -moz-box-orient: horizontal;
+            box-orient: horizontal;
+
+            -webkit-box-pack: center;
+            -moz-box-pack: center;
+            box-pack: center;
+
+            -webkit-box-align: center;
+            -moz-box-align: center;
+            box-align: center;
+
+            color: #ffffff;
+            text-align: center;
+            font-family: Arial;
+            font-size: 14px;
+            line-height: 24px;
+
+            cursor: pointer;
+        }
+
+        .letfTop {
+            position: absolute;
+            left: 0;
+            top: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="blocker">
+        <div id="instructions">
+            <span style="font-size:36px">Click to play</span>
+            <br /><br />
+            Move: WASD<br />
+            Jump: SPACE<br />
+            Look: MOUSE
+        </div>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.124.0/build/three.module.js';
+        import { PointerLockControls } from 'https://unpkg.com/three@0.122.0/examples/jsm/controls/PointerLockControls.js';
+
+
+
+
+        let selfCube;
+        let moved = 5;
+        const cubeSizeArray = [5, 5, 5];
+        let xSpeed = 5;
+        let zSpeed = 5;
+        let positions = new Map();
+        const geometry = new THREE.BoxGeometry();
+        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const socket = io();
+        let camera, scene, renderer, controls;
+        const color = new THREE.Color();
+
+        socket.on('connect', function () {
+            console.log('socket.id', socket.id);
+            init(socket);//初始化threejs基础设施
+            animate();
+        })
+
+        socket.on("marker2", data => {
+            console.log('socket.id adding2', socket.id);
+            console.log('data', data);
+            let {id,pos}=data;
+            let cube = scene.getObjectByName(id);//根据name查找
+            console.log('cube', cube);
+            if (cube) {//如果已在场景中添加，则只更新位置
+                console.log('之前的cube已添加，更新位置');
+                cube.position.set(pos.x, pos.y, pos.z);
+            } else {//如果未在场景中添加，则1、新建物体2、命名以方便查找3、在场景中添加
+                console.log('之前的cube未在场景中添加');
+                cube = createCube(cubeSizeArray, 0xff0000);
+                cube.position.set(pos.x, pos.y, pos.z);
+                cube.name = id;
+                scene.add(cube);
+            }
+        });
+
+        function init(socket) {
+            //设置相机参数
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+            camera.position.y = 10;
+            camera.position.z = 50;
+
+            // 设置场景参数
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xffffff);
+            scene.fog = new THREE.Fog(0xffffff, 0, 750);
+
+            // 设置初始化物体
+            selfCube = createCube(cubeSizeArray, 0x0000ff);
+            selfCube.name = socket.id;
+            scene.add(selfCube);
+
+            // 灯光
+            const light = new THREE.HemisphereLight(0xeeeeff, 0x777788, 0.75);
+            light.position.set(0.5, 1, 0.75);
+            scene.add(light);
+
+            // 控制器
+            controls = new PointerLockControls(camera, document.body);
+            // 切换状态界面设置，lock与非lock
+            const blocker = document.getElementById('blocker');
+            const instructions = document.getElementById('instructions');
+            instructions.addEventListener('click', function () {
+                controls.lock();
+            }, false);
+            controls.addEventListener('lock', function () {
+                instructions.style.display = 'none';
+                blocker.style.display = 'none';
+            });
+            controls.addEventListener('unlock', function () {
+                blocker.style.display = 'block';
+                instructions.style.display = '';
+            });
+            scene.add(controls.getObject());
+
+            // 按键控制物体位置
+            document.addEventListener("keydown", onDocumentKeyDown, false);
+            function onDocumentKeyDown(event) {
+                let keyCode = event.which;
+                if (keyCode == 87) {//w
+                    selfCube.position.z -= zSpeed;
+                    moved = 8;
+                } else if (keyCode == 83) {//s
+                    selfCube.position.z += zSpeed;
+                    moved = 2;
+                } else if (keyCode == 65) {//a
+                    selfCube.position.x -= xSpeed;
+                    moved = 4;
+                } else if (keyCode == 68) {//d
+                    selfCube.position.x += xSpeed;
+                    moved = 6;
+                } else if (keyCode == 32) {//space
+                    selfCube.position.set(0, 0, 0);
+                    moved = 0;
+                }
+                if (moved % 2 === 0) {//只有位移按键才触发更新emit函数
+                    console.log('move update');
+                    let position = selfCube.position;
+                    socket.emit("marker2", position);
+                }
+            };
+
+            // 设置地板
+            let floorGeometry = new THREE.PlaneBufferGeometry(2000, 2000, 100, 100);
+            floorGeometry.rotateX(- Math.PI / 2);
+            let floorMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.position.set(0, -cubeSizeArray[1] / 2, 0);
+            scene.add(floor);
+
+            // 渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 控制界面尺寸调整
+            window.addEventListener('resize', onWindowResize, false);
+            function onWindowResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+
+
+        }
+        // 创建物体函数
+        function createCube(size = [1, 1, 1], color = 0xff0000) {
+            const geometry = new THREE.BoxGeometry(...size);
+            const material = new THREE.MeshBasicMaterial({ color: color });
+            const cube = new THREE.Mesh(geometry, material);
+            const radiansPerSecond = THREE.MathUtils.degToRad(30);
+            return cube;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+    </script>
+</body>
+
+</html>
